@@ -1,0 +1,46 @@
+# Core data processing
+pandas==2.2.3
+numpy==1.26.4
+
+# HTTP client
+requests==2.31.0
+
+# Workflow orchestration
+prefect==2.18.3
+
+# Database
+duckdb==1.0.0
+
+# Data transformation
+dbt-core==1.8.7
+dbt-duckdb==1.8.3
+
+# ML experiment tracking
+mlflow==2.16.2
+
+# API framework
+fastapi==0.115.0
+uvicorn[standard]==0.28.1
+
+# Data validation
+pydantic==2.8.2
+
+# Machine learning
+scikit-learn==1.5.2
+statsmodels==0.14.2
+
+# Data quality
+pandera==0.18.0
+
+# Development tools
+ruff==0.5.7
+mypy==1.11.2
+
+# Environment management
+python-dotenv==1.0.1
+
+# Additional dependencies for compatibility
+typing-extensions==4.12.2
+anyio==3.7.1
+multimethod==1.12
+griffe==0.39.1

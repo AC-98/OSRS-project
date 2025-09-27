@@ -1,0 +1,41 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw data tables populated by Prefect flows"
+    tables:
+      - name: item_mapping
+        description: "OSRS item metadata from Wiki API"
+        columns:
+          - name: id
+            description: "Unique item ID"
+            tests:
+              - not_null
+              - unique
+          - name: name
+            description: "Item display name"
+            tests:
+              - not_null
+          
+      - name: timeseries_raw
+        description: "Raw timeseries price data from Wiki API"
+        columns:
+          - name: timestamp
+            description: "Price data timestamp"
+            tests:
+              - not_null
+          - name: item_id  
+            description: "Item ID reference"
+            tests:
+              - not_null
+          - name: highPriceVolume
+            description: "Volume traded at high price"
+          - name: lowPriceVolume
+            description: "Volume traded at low price"
+
+  - name: gold
+    description: "Gold layer tables for ML and API serving"
+    tables:
+      - name: gold_backtest_metrics_raw
+        description: "Raw backtest results populated by CLI script (created after running backtests)"
+        # Note: Tests removed because this table doesn't exist until backtests are run

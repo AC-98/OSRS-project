@@ -1,0 +1,34 @@
+# OSRS Signals - Item Selection Configuration
+# 
+# This file controls which items are selected for forecasting based on
+# trading volume and data continuity criteria, with manual override options.
+
+# Automatic selection criteria
+auto_select:
+  # Number of top items to select based on ranking criteria
+  top_n: 10
+  
+  # Minimum days of data required (out of last 365 days)
+  min_days: 10  # Relaxed for demo data
+  
+  # Minimum median daily volume threshold (units traded per day)
+  min_volume: 1000  # 1K units minimum (relaxed for demo)
+  
+  # Lookback period for analysis (days)
+  lookback_days: 365
+
+# Manual overrides
+# Items in manual_include will always be selected (if they meet min_days requirement)
+manual_include: [5616]  # Include Coins (test item) for demo
+
+# Items in manual_exclude will never be selected, even if they rank highly
+manual_exclude: []
+
+# Example manual overrides:
+# manual_include:
+#   - 4151  # Abyssal whip - always include
+#   - 561   # Nature rune - always include
+# 
+# manual_exclude:
+#   - 995   # Coins - exclude (not a tradeable item)
+#   - 6570  # Fire cape - exclude (untradeable)

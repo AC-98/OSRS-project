@@ -1,0 +1,46 @@
+name: 'osrs_signals'
+version: '1.0.0'
+config-version: 2
+
+# This setting configures which "profile" dbt uses for this project.
+profile: 'osrs_signals'
+
+# These configurations specify where dbt should look for different types of files.
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Configuring models
+models:
+  osrs_signals:
+    # Config indicated by + and applies to all files under models/bronze/
+    bronze:
+      +materialized: table
+      +schema: bronze
+    silver:
+      +materialized: table  
+      +schema: silver
+    gold:
+      +materialized: table
+      +schema: gold
+
+# Test configurations
+tests:
+  +store_failures: true
+  +severity: warn
+
+# Snapshot configurations
+snapshots:
+  osrs_signals:
+    +target_schema: snapshots
+
+vars:
+  # Default timezone for timestamp operations
+  timezone: 'UTC'

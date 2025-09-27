@@ -1,0 +1,17 @@
+osrs_signals:
+  outputs:
+    dev:
+      type: duckdb
+      path: '../warehouse/osrs.duckdb'
+      threads: 4
+      keepalives_idle: 0
+      schema: main
+      
+    prod:
+      type: duckdb  
+      path: '../warehouse/osrs_prod.duckdb'
+      threads: 4
+      keepalives_idle: 0
+      schema: main
+      
+  target: dev

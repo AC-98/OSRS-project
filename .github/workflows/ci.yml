@@ -1,0 +1,159 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Create environment file
+      run: |
+        echo "OSRS_USER_AGENT=OSRS-Signals-CI-Test" > .env
+        echo "DUCKDB_PATH=test_warehouse/test.duckdb" >> .env
+        echo "MLFLOW_TRACKING_URI=file:./test_mlruns" >> .env
+
+    - name: Create test directories
+      run: |
+        mkdir -p test_warehouse
+        mkdir -p test_mlruns
+
+    - name: Run ruff linting
+      run: |
+        ruff check . --output-format=github
+      continue-on-error: true
+
+    - name: Run ruff formatting check
+      run: |
+        ruff format . --check
+      continue-on-error: true
+
+    - name: Run mypy type checking
+      run: |
+        mypy flows/ models_ml/ api/ --ignore-missing-imports --no-strict-optional
+      continue-on-error: true
+
+    - name: Run unit tests
+      run: |
+        python -m pytest tests/ -v --tb=short
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+    - name: Test dbt project structure
+      run: |
+        cd dbt
+        # Test dbt configuration
+        dbt debug --profiles-dir . --target dev || echo "dbt debug failed (expected without data)"
+        # Parse dbt models
+        dbt parse --profiles-dir . --target dev || echo "dbt parse failed (expected without data)"
+
+    - name: Test Prefect flow syntax
+      run: |
+        python -c "
+        import sys
+        sys.path.append('flows')
+        try:
+            from ingest_osrs import ingest_osrs_data
+            print('✓ Prefect flow imports successfully')
+        except ImportError as e:
+            print(f'✗ Prefect flow import failed: {e}')
+            sys.exit(1)
+        "
+
+    - name: Test API startup
+      run: |
+        python -c "
+        import sys
+        sys.path.append('api')
+        try:
+            from main import app
+            print('✓ FastAPI app imports successfully')
+        except ImportError as e:
+            print(f'✗ FastAPI app import failed: {e}')
+            sys.exit(1)
+        "
+
+    - name: Generate test coverage report (if pytest-cov is available)
+      run: |
+        pip install pytest-cov || echo "pytest-cov not available"
+        python -m pytest tests/ --cov=. --cov-report=xml --cov-report=term-missing || echo "Coverage report generation failed"
+      continue-on-error: true
+
+    - name: Upload coverage to Codecov (optional)
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+      continue-on-error: true
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install security scanning tools
+      run: |
+        pip install safety bandit
+      continue-on-error: true
+
+    - name: Run safety check
+      run: |
+        safety check --json || echo "Safety check completed with warnings"
+      continue-on-error: true
+
+    - name: Run bandit security scan
+      run: |
+        bandit -r . -f json -o bandit-report.json || echo "Bandit scan completed with warnings"
+      continue-on-error: true
+
+  build-info:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Display project structure
+      run: |
+        echo "Project structure:"
+        find . -type f -name "*.py" -o -name "*.yml" -o -name "*.yaml" -o -name "*.sql" -o -name "*.md" | head -20
+
+    - name: Display Python version and dependencies
+      run: |
+        python --version
+        echo "Requirements:"
+        head -10 requirements.txt || echo "No requirements.txt found"

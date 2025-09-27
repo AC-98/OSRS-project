@@ -1,0 +1,63 @@
+version: 2
+
+models:
+  - name: gold_daily_features
+    description: "Daily OSRS item features with price statistics and outlier detection"
+    columns:
+      - name: item_id
+        description: "OSRS item identifier"
+        tests:
+          - not_null
+      - name: date
+        description: "Date of the price data"
+        tests:
+          - not_null
+      - name: latest_price
+        description: "Latest price (midpoint of high/low) for the day"
+        tests:
+          - non_negative
+      - name: latest_price_high
+        description: "Latest high price for the day"
+        tests:
+          - non_negative
+      - name: latest_price_low
+        description: "Latest low price for the day"
+        tests:
+          - non_negative
+      - name: price_7d_ma
+        description: "7-day moving average of price"
+        tests:
+          - non_negative
+      - name: daily_return
+        description: "Daily return as percentage change from previous day"
+      - name: volatility_proxy
+        description: "Simple volatility measure: (high-low)/midpoint"
+      - name: is_outlier
+        description: "Boolean flag indicating if day is an outlier"
+        tests:
+          - not_null
+      - name: total_volume
+        description: "Total trading volume for the day"
+        tests:
+          - non_negative
+      - name: observation_count
+        description: "Number of price observations during the day"
+        tests:
+          - not_null
+          - non_negative
+      - name: min_price
+        description: "Minimum price observed during the day"
+        tests:
+          - non_negative
+      - name: max_price
+        description: "Maximum price observed during the day"
+        tests:
+          - non_negative
+      - name: dbt_updated_at
+        description: "Timestamp when record was last updated"
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "item_id || '|' || date"
+          name: unique_item_date_combination
