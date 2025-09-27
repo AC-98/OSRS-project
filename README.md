@@ -252,6 +252,9 @@ curl http://localhost:8000/health
 curl http://localhost:8000/items
 curl "http://localhost:8000/predict?item_id=561&horizon=1"
 curl "http://localhost:8000/metrics?item_id=561&last=30d"
+
+# Access the web UI
+open http://localhost:8000/ui
 ```
 
 #### 5. Full Pipeline Automation
@@ -323,6 +326,37 @@ This project successfully demonstrates:
 - ✅ **Professional documentation** with clear setup guides and technical explanations
 
 The result is a complete, portfolio-ready data system that showcases the fundamentals needed for any data engineering role.
+
+## Web UI Dashboard
+
+The project includes a responsive web dashboard at `/ui` that provides:
+
+**📊 Three Main Panels:**
+- **Selected Items Table**: Shows curated items with volume, coverage, and selection criteria
+- **Performance Leaderboard**: Displays best-performing models per item (lowest sMAPE)
+- **Item Analysis Chart**: Interactive price forecasting with Chart.js visualization
+
+**🔧 Key Features:**
+- **Real-time data**: All data fetched from API endpoints (no external calls)
+- **Interactive charts**: Select items from dropdown to view metrics and forecasts
+- **Responsive design**: Works on desktop and mobile devices
+- **Accessibility**: ARIA labels, keyboard navigation, and semantic HTML
+- **Error handling**: User-friendly messages for missing data
+
+**📡 API Endpoints Used:**
+- `GET /selection` - Returns curated item list with metadata
+- `GET /leaderboard?last=30d` - Shows best method per item (sMAPE + MAE)
+- `GET /predict?item_id=X&horizon=1` - Price forecasts for selected items
+- `GET /metrics?item_id=X&last=30d` - Model performance metrics
+
+**📸 Screenshot:**
+```powershell
+# Start the API server
+uvicorn api.main:app --reload
+
+# Open browser to http://localhost:8000/ui
+# Take screenshot: Win+Shift+S or use browser dev tools
+```
 
 ## Development
 

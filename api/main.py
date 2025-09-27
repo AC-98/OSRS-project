@@ -16,9 +16,11 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
+import json
 
 # Import our ML utilities
 import sys
@@ -32,6 +34,9 @@ from config_utils import load_selected_items
 
 # Load environment
 load_dotenv()
+
+# Initialize Jinja2 templates
+templates = Jinja2Templates(directory="api/templates")
 
 # Configure structured logging
 logging.basicConfig(
@@ -137,6 +142,41 @@ class MetricsResponse(BaseModel):
     evaluation_period: str = Field(..., description="Evaluation time period")
     n_predictions: int = Field(..., description="Number of predictions evaluated")
     last_updated: datetime = Field(..., description="Metrics last updated")
+
+
+class SelectionItem(BaseModel):
+    """Item in the selection response."""
+    id: int = Field(..., description="Item ID")
+    name: str = Field(..., description="Item name")
+    median_units_per_day: float = Field(..., description="Median daily trading volume (units)")
+    median_turnover_gp: Optional[float] = Field(..., description="Median daily turnover (GP)")
+    coverage: float = Field(..., description="Data coverage percentage")
+    days_with_data: int = Field(..., description="Days with trading data")
+    selection_reason: str = Field(..., description="Reason for selection")
+
+
+class SelectionResponse(BaseModel):
+    """Response model for selection endpoint."""
+    total_items: int = Field(..., description="Total selected items")
+    generated_at: str = Field(..., description="Selection timestamp")
+    items: List[SelectionItem] = Field(..., description="Selected items")
+
+
+class LeaderboardEntry(BaseModel):
+    """Entry in the leaderboard response."""
+    item_id: int = Field(..., description="Item ID")
+    name: str = Field(..., description="Item name")
+    method: str = Field(..., description="Best performing method")
+    smape: float = Field(..., description="sMAPE score (%)")
+    mae: float = Field(..., description="MAE score")
+    n: int = Field(..., description="Number of predictions")
+
+
+class LeaderboardResponse(BaseModel):
+    """Response model for leaderboard endpoint."""
+    total_items: int = Field(..., description="Total items in leaderboard")
+    period_days: int = Field(..., description="Evaluation period in days")
+    entries: List[LeaderboardEntry] = Field(..., description="Leaderboard entries")
 
 
 # API Endpoints
@@ -443,6 +483,676 @@ async def get_model_metrics(
                     detail=f"No backtest metrics available. Run: python scripts/run_backtest.py --items {item_id}"
                 )
             raise HTTPException(status_code=500, detail="Failed to fetch metrics")
+
+
+@app.get("/selection", response_model=SelectionResponse)
+async def get_selection():
+    """Get the current item selection from config/items_selected.json."""
+    logger.info("Selection requested")
+    
+    try:
+        # Load the selection file
+        selection_file = Path("config/items_selected.json")
+        
+        if not selection_file.exists():
+            raise HTTPException(
+                status_code=404,
+                detail="No item selection available. Run: python scripts/select_items.py"
+            )
+        
+        with open(selection_file, 'r') as f:
+            data = json.load(f)
+        
+        # Convert to response format
+        items = []
+        for item in data.get("items", []):
+            items.append(SelectionItem(
+                id=item["id"],
+                name=item["name"],
+                median_units_per_day=item["median_units_per_day"],
+                median_turnover_gp=item.get("median_turnover_gp"),
+                coverage=item["coverage"],
+                days_with_data=item["days_with_data"],
+                selection_reason=item["selection_reason"]
+            ))
+        
+        logger.info(f"Returning {len(items)} selected items")
+        return SelectionResponse(
+            total_items=len(items),
+            generated_at=data.get("metadata", {}).get("generated_at", ""),
+            items=items
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Selection error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load item selection")
+
+
+@app.get("/leaderboard", response_model=LeaderboardResponse)
+async def get_leaderboard(last: str = Query("30d", description="Time period (e.g., 30d, 7d)")):
+    """Get the model performance leaderboard for best method per item."""
+    logger.info(f"Leaderboard requested: period={last}")
+    
+    # Parse the time period
+    try:
+        if last.endswith('d'):
+            period_days = int(last[:-1])
+        else:
+            period_days = 30  # Default fallback
+    except ValueError:
+        period_days = 30
+    
+    cutoff_date = datetime.now() - timedelta(days=period_days)
+    
+    with get_db_connection() as conn:
+        try:
+            # Query to get best method per item (lowest sMAPE, tie-break by MAE)
+            query = """
+            WITH item_method_stats AS (
+                SELECT 
+                    gbm.item_id,
+                    im.name,
+                    gbm.method,
+                    AVG(gbm.smape) as avg_smape,
+                    AVG(gbm.mae) as avg_mae,
+                    COUNT(*) as n_predictions
+                FROM main_gold.gold_backtest_metrics gbm
+                JOIN main_bronze.bronze_item_mapping im ON gbm.item_id = im.id
+                WHERE gbm.date >= ?
+                GROUP BY gbm.item_id, im.name, gbm.method
+            ),
+            
+            best_methods AS (
+                SELECT 
+                    item_id,
+                    name,
+                    method,
+                    avg_smape,
+                    avg_mae,
+                    n_predictions,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY item_id 
+                        ORDER BY avg_smape ASC, avg_mae ASC
+                    ) as rank
+                FROM item_method_stats
+            )
+            
+            SELECT 
+                item_id,
+                name,
+                method,
+                avg_smape as smape,
+                avg_mae as mae,
+                n_predictions as n
+            FROM best_methods
+            WHERE rank = 1
+            ORDER BY smape ASC, mae ASC
+            """
+            
+            df = conn.execute(query, [cutoff_date]).df()
+            
+            if df.empty:
+                logger.warning("No backtest metrics found for leaderboard")
+                return LeaderboardResponse(
+                    total_items=0,
+                    period_days=period_days,
+                    entries=[]
+                )
+            
+            # Convert to response format
+            entries = []
+            for _, row in df.iterrows():
+                entries.append(LeaderboardEntry(
+                    item_id=int(row['item_id']),
+                    name=str(row['name']),
+                    method=str(row['method']),
+                    smape=float(row['smape']),
+                    mae=float(row['mae']),
+                    n=int(row['n'])
+                ))
+            
+            logger.info(f"Returning leaderboard with {len(entries)} items")
+            return LeaderboardResponse(
+                total_items=len(entries),
+                period_days=period_days,
+                entries=entries
+            )
+            
+        except Exception as e:
+            logger.error(f"Leaderboard error: {e}")
+            if "does not exist" in str(e).lower() or "no such table" in str(e).lower():
+                raise HTTPException(
+                    status_code=404,
+                    detail="No backtest metrics available. Run: python scripts/run_backtest.py"
+                )
+            raise HTTPException(status_code=500, detail="Failed to fetch leaderboard")
+
+
+@app.get("/ui", response_class=HTMLResponse)
+async def get_ui():
+    """Serve the static UI dashboard."""
+    logger.info("UI requested")
+    
+    html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSRS Project Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #7f8c8d;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .panel h2 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+            font-size: 1.2em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        
+        .chart-panel {
+            grid-column: 1 / -1;
+        }
+        
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        .table th,
+        .table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        .table tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .dropdown {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        
+        .dropdown:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .metrics-chips {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .chip {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .chip-mae {
+            background-color: #e8f4f8;
+            color: #2980b9;
+        }
+        
+        .chip-smape {
+            background-color: #f0f8e8;
+            color: #27ae60;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #7f8c8d;
+            padding: 20px;
+        }
+        
+        .error {
+            background-color: #fdf2f2;
+            color: #e74c3c;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #e74c3c;
+            margin: 10px 0;
+        }
+        
+        .empty-state {
+            text-align: center;
+            color: #7f8c8d;
+            padding: 40px 20px;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-top: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+        }
+        
+        /* Accessibility improvements */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        
+        button:focus,
+        select:focus {
+            outline: 2px solid #3498db;
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>OSRS Project Dashboard</h1>
+            <p>Real-time item selection, model performance, and price forecasting</p>
+        </div>
+        
+        <div class="grid">
+            <div class="panel">
+                <h2>Selected Items</h2>
+                <div id="selection-content">
+                    <div class="loading">Loading selected items...</div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Performance Leaderboard</h2>
+                <div id="leaderboard-content">
+                    <div class="loading">Loading leaderboard...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel chart-panel">
+            <h2>Item Analysis</h2>
+            <select id="item-dropdown" class="dropdown" aria-label="Select item for analysis">
+                <option value="">Select an item...</option>
+            </select>
+            
+            <div id="metrics-chips" class="metrics-chips" style="display: none;">
+                <div class="chip chip-mae" id="mae-chip" aria-label="Mean Absolute Error">
+                    MAE: <span id="mae-value">-</span>
+                </div>
+                <div class="chip chip-smape" id="smape-chip" aria-label="Symmetric Mean Absolute Percentage Error">
+                    sMAPE: <span id="smape-value">-</span>%
+                </div>
+            </div>
+            
+            <div id="chart-content">
+                <div class="empty-state">
+                    Select an item to view price history and forecasts
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let selectedItems = [];
+        let chart = null;
+        
+        // API helpers
+        async function fetchAPI(endpoint) {
+            try {
+                const response = await fetch(endpoint);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error(`API Error (${endpoint}):`, error);
+                throw error;
+            }
+        }
+        
+        // Load initial data
+        async function loadInitialData() {
+            try {
+                // Load selection and leaderboard in parallel
+                const [selectionData, leaderboardData] = await Promise.all([
+                    fetchAPI('/selection'),
+                    fetchAPI('/leaderboard?last=30d')
+                ]);
+                
+                selectedItems = selectionData.items;
+                renderSelection(selectionData);
+                renderLeaderboard(leaderboardData);
+                populateItemDropdown(selectedItems);
+                
+            } catch (error) {
+                renderError('selection-content', 'Failed to load data. Please ensure the pipeline has run.');
+                renderError('leaderboard-content', 'Failed to load leaderboard data.');
+            }
+        }
+        
+        // Render functions
+        function renderSelection(data) {
+            const content = document.getElementById('selection-content');
+            
+            if (!data.items || data.items.length === 0) {
+                content.innerHTML = '<div class="empty-state">No items selected. Run item selection first.</div>';
+                return;
+            }
+            
+            const table = `
+                <table class="table" role="table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Item</th>
+                            <th scope="col">Units/Day</th>
+                            <th scope="col">Coverage</th>
+                            <th scope="col">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.items.map(item => `
+                            <tr>
+                                <td><strong>${item.name}</strong></td>
+                                <td>${formatNumber(item.median_units_per_day)}</td>
+                                <td>${item.coverage.toFixed(1)}%</td>
+                                <td>${item.selection_reason.replace('_', ' ')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <p style="margin-top: 10px; font-size: 0.9em; color: #7f8c8d;">
+                    ${data.total_items} items selected on ${new Date(data.generated_at).toLocaleDateString()}
+                </p>
+            `;
+            
+            content.innerHTML = table;
+        }
+        
+        function renderLeaderboard(data) {
+            const content = document.getElementById('leaderboard-content');
+            
+            if (!data.entries || data.entries.length === 0) {
+                content.innerHTML = '<div class="empty-state">No metrics yet—run backtests first.</div>';
+                return;
+            }
+            
+            const table = `
+                <table class="table" role="table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Item</th>
+                            <th scope="col">Method</th>
+                            <th scope="col">sMAPE</th>
+                            <th scope="col">MAE</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.entries.slice(0, 10).map(entry => `
+                            <tr>
+                                <td><strong>${entry.name}</strong></td>
+                                <td>${entry.method.replace('_', ' ')}</td>
+                                <td>${entry.smape.toFixed(2)}%</td>
+                                <td>${formatNumber(entry.mae)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <p style="margin-top: 10px; font-size: 0.9em; color: #7f8c8d;">
+                    Top performers over last ${data.period_days} days
+                </p>
+            `;
+            
+            content.innerHTML = table;
+        }
+        
+        function renderError(containerId, message) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<div class="error" role="alert">${message}</div>`;
+        }
+        
+        function populateItemDropdown(items) {
+            const dropdown = document.getElementById('item-dropdown');
+            dropdown.innerHTML = '<option value="">Select an item...</option>';
+            
+            items.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item.id;
+                option.textContent = item.name;
+                dropdown.appendChild(option);
+            });
+        }
+        
+        // Chart functions
+        async function loadItemData(itemId) {
+            if (!itemId) {
+                hideChart();
+                return;
+            }
+            
+            try {
+                const [metricsData, predictionData] = await Promise.all([
+                    fetchAPI(`/metrics?item_id=${itemId}&last=30d`),
+                    fetchAPI(`/predict?item_id=${itemId}&horizon=1`)
+                ]);
+                
+                updateMetricsChips(metricsData);
+                renderChart(metricsData, predictionData);
+                
+            } catch (error) {
+                renderError('chart-content', 'Failed to load item data. Ensure backtests have been run for this item.');
+                hideMetricsChips();
+            }
+        }
+        
+        function updateMetricsChips(metricsData) {
+            const maeValue = document.getElementById('mae-value');
+            const smapeValue = document.getElementById('smape-value');
+            const chipsContainer = document.getElementById('metrics-chips');
+            
+            maeValue.textContent = formatNumber(metricsData.mae);
+            smapeValue.textContent = metricsData.smape.toFixed(2);
+            chipsContainer.style.display = 'flex';
+        }
+        
+        function hideMetricsChips() {
+            document.getElementById('metrics-chips').style.display = 'none';
+        }
+        
+        function renderChart(metricsData, predictionData) {
+            const chartContent = document.getElementById('chart-content');
+            chartContent.innerHTML = '<div class="chart-container"><canvas id="price-chart" role="img" aria-label="Price history and forecast chart"></canvas></div>';
+            
+            // For now, create a simple chart with the current price and prediction
+            // In a real implementation, you'd fetch historical data from metrics
+            const ctx = document.getElementById('price-chart').getContext('2d');
+            
+            if (chart) {
+                chart.destroy();
+            }
+            
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [today.toLocaleDateString(), tomorrow.toLocaleDateString()],
+                    datasets: [
+                        {
+                            label: 'Current Price',
+                            data: [predictionData.current_price, null],
+                            borderColor: '#3498db',
+                            backgroundColor: '#3498db',
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Forecast',
+                            data: [null, predictionData.forecast[0]],
+                            borderColor: '#e74c3c',
+                            backgroundColor: '#e74c3c',
+                            pointRadius: 6,
+                            pointHoverRadius: 8,
+                            borderDash: [5, 5]
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${predictionData.item_name} - Price Forecast`
+                        },
+                        legend: {
+                            display: true
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: 'Price (GP)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Date'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function hideChart() {
+            const chartContent = document.getElementById('chart-content');
+            chartContent.innerHTML = '<div class="empty-state">Select an item to view price history and forecasts</div>';
+            hideMetricsChips();
+            
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+        }
+        
+        // Utility functions
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            }
+            return Math.round(num).toString();
+        }
+        
+        // Event listeners
+        document.getElementById('item-dropdown').addEventListener('change', (e) => {
+            loadItemData(e.target.value);
+        });
+        
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.getElementById('item-dropdown').value = '';
+                hideChart();
+            }
+        });
+        
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', () => {
+            loadInitialData();
+        });
+    </script>
+</body>
+</html>
+    """
+    
+    return HTMLResponse(content=html_content)
 
 
 @app.exception_handler(Exception)
