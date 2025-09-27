@@ -1,6 +1,17 @@
-# OSRS Signals
+# OSRS Project
 
-A production-minded data engineering pipeline for OSRS Grand Exchange price forecasting. Demonstrates reliable ingestion, dbt transformations, backtested forecasts with honest metrics, and a thin API.
+A complete data engineering pipeline for OSRS Grand Exchange price forecasting, built to demonstrate the fundamentals that matter in data roles.
+
+## Why I Built This
+
+I created this project to practice and showcase core data engineering skills:
+
+- **Writing testable, modular data transformations** using dbt with proper testing and documentation
+- **Proper experiment tracking and model versioning** with MLflow for reproducible ML workflows  
+- **Building APIs that can handle real traffic patterns** with FastAPI, proper error handling, and structured logging
+- **Creating documentation that teammates can actually use** with clear setup guides and comprehensive examples
+
+The goal is a small but complete system that demonstrates these skills in action - the kind of foundation you'd want for any data product.
 
 ## Architecture
 
@@ -101,9 +112,9 @@ tests/            # Unit and data tests
 scripts/          # One-off utilities
 ```
 
-## How We Choose Items
+## How Items Are Selected
 
-OSRS Signals uses a data-driven approach to select items for forecasting, balancing trading volume and data continuity.
+The system uses a data-driven approach to select items for forecasting, balancing trading volume and data continuity.
 
 ### Selection Criteria
 
@@ -151,11 +162,39 @@ curl http://localhost:8000/items
 
 The `/items` endpoint returns only curated items, not the full OSRS item database.
 
+## Technical Highlights
+
+This project demonstrates several key technical practices:
+
+**Data Engineering:**
+- Modular, testable transformations with dbt (Bronze → Silver → Gold architecture)
+- Comprehensive data quality tests and validation with Pandera schemas
+- Incremental processing and proper handling of late-arriving data
+- Automated data lineage and documentation
+
+**MLOps & Experimentation:**
+- Systematic experiment tracking with MLflow (metrics, parameters, artifacts)
+- Rolling walk-forward validation for honest backtesting
+- Automated model evaluation and comparison across multiple methods
+- Reproducible ML workflows with proper versioning
+
+**API Development:**
+- Production-ready FastAPI with proper error handling and status codes
+- Structured logging for observability and debugging
+- Input validation with Pydantic v2 schemas
+- Context-managed database connections and resource cleanup
+
+**DevOps & Automation:**
+- End-to-end pipeline automation with PowerShell scripts
+- Comprehensive CI/CD setup with GitHub Actions
+- Environment management and dependency pinning
+- Clear documentation for local development and deployment
+
 ## Complete Usage Guide
 
 ### Step-by-Step Workflow
 
-**🎯 Goal:** Set up OSRS Signals, ingest data, select items, run backtests, and serve predictions via API.
+**🎯 Goal:** Set up the OSRS project, ingest data, select items, run backtests, and serve predictions via API.
 
 #### 1. Initial Setup (First Time Only)
 
@@ -272,14 +311,18 @@ curl "http://localhost:8000/metrics?item_id=561&last=30d"
 - **`run_backtest.py`** - Core functionality
 - **`config_utils.py`** - Shared utilities
 
-## Acceptance Criteria (v1)
+## Project Outcomes
 
-- ✅ One Prefect flow writes bronze tables to DuckDB
-- ✅ dbt builds silver/gold with 2 data tests
-- ✅ Backtests (walk-forward) logged in MLflow
-- ✅ FastAPI serves /predict and /metrics endpoints
-- ✅ README explains why + how with portfolio case study link
-- ✅ Item-driven configuration with auto-selection and manual overrides
+This project successfully demonstrates:
+
+- ✅ **Reliable data ingestion** with Prefect flows writing to DuckDB bronze tables
+- ✅ **Modular transformations** with dbt building silver/gold layers plus testing
+- ✅ **Proper ML workflows** with walk-forward backtests logged to MLflow
+- ✅ **Production-ready API** serving predictions and metrics via FastAPI
+- ✅ **Intelligent automation** with item-driven configuration and auto-selection
+- ✅ **Professional documentation** with clear setup guides and technical explanations
+
+The result is a complete, portfolio-ready data system that showcases the fundamentals needed for any data engineering role.
 
 ## Development
 
