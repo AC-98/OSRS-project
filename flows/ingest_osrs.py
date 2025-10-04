@@ -50,7 +50,14 @@ RAW_DATA_PATH.mkdir(parents=True, exist_ok=True)
 DEFAULT_DEMO_ITEM_IDS = [
     4151,  # Abyssal whip
     561,   # Nature rune
-    5616,  # Coins (test item)
+    5616,  # Bronze arrow(p+) (test item)
+    565,   # Blood rune
+    536,   # Dragon bones
+    385,   # Shark
+    453,   # Coal
+    440,   # Iron ore
+    1515,  # Yew logs
+    1513,  # Magic logs
 ]
 
 
@@ -330,8 +337,10 @@ def ingest_osrs_data(item_ids: Optional[List[int]] = None) -> None:
     if item_ids is None:
         # Try to load from config, fallback to default
         try:
-            item_ids = load_selected_items("config/items_selected.json", DEFAULT_DEMO_ITEM_IDS)
-            logger.info(f"Loaded {len(item_ids)} items from config")
+            config_items = load_selected_items("config/items_selected.json", DEFAULT_DEMO_ITEM_IDS)
+            # For now, combine config items with expanded demo items to get more data
+            item_ids = list(set(config_items + DEFAULT_DEMO_ITEM_IDS))
+            logger.info(f"Loaded {len(config_items)} items from config, expanded to {len(item_ids)} total items")
         except Exception as e:
             logger.warning(f"Failed to load config, using defaults: {e}")
             item_ids = DEFAULT_DEMO_ITEM_IDS

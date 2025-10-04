@@ -162,6 +162,61 @@ curl http://localhost:8000/items
 
 The `/items` endpoint returns only curated items, not the full OSRS item database.
 
+## Curating by Names
+
+In addition to ID-based overrides, you can include/exclude items by name for easier configuration:
+
+### Configuration Examples
+
+```yaml
+# config/items.yaml
+manual_include_names: 
+  - "Abyssal whip"      # Case-insensitive exact match
+  - "Dragon longsword"  # Will resolve to item ID automatically
+  - "nature rune"       # Case doesn't matter
+
+manual_exclude_names:
+  - "Coins"             # Exclude by name
+  - "Fire cape"         # Untradeable items
+```
+
+### How Name Resolution Works
+
+**Process:**
+1. **Case-insensitive matching**: "ABYSSAL WHIP" matches "Abyssal whip"
+2. **Exact match required**: Partial matches are ignored for safety
+3. **Graceful handling**: Missing names log warnings but don't break the pipeline
+4. **Deduplication**: Combined with ID-based includes, duplicates removed
+5. **Local lookup only**: Uses warehouse mapping table, no external API calls
+
+**Resolution Order:**
+```
+Auto-selected items (top N by ranking)
++ manual_include (IDs)
++ manual_include_names (resolved to IDs)
+- manual_exclude (IDs)  
+- manual_exclude_names (resolved to IDs)
+= Final curated list
+```
+
+**Error Handling:**
+- **Multiple matches**: Logs all matches and skips (e.g., if "Rune" matches multiple items)
+- **No matches**: Logs warning and continues (names may change over time)
+- **Pipeline continues**: Name resolution failures don't break item selection
+
+### Coverage and Volume Definitions
+
+**Coverage Calculation:**
+- **Formula**: `(days_with_data / lookback_days) × 100`
+- **Window**: Last 365 days by default (configurable via `lookback_days`)
+- **Denominator**: Total possible days in analysis period
+- **Numerator**: Unique dates where item had ≥1 trade recorded
+
+**Volume Metrics:**
+- **Units**: `median_units_per_day` - actual items traded (not GP value)
+- **Turnover**: `median_turnover_gp` = units × median_price (GP value)
+- **Ranking**: Based on `log(units + 1) × coverage_pct / 100`
+
 ## Technical Highlights
 
 This project demonstrates several key technical practices:
@@ -186,7 +241,7 @@ This project demonstrates several key technical practices:
 
 **DevOps & Automation:**
 - End-to-end pipeline automation with PowerShell scripts
-- Comprehensive CI/CD setup with GitHub Actions
+- CI/CD setup with GitHub Actions
 - Environment management and dependency pinning
 - Clear documentation for local development and deployment
 
@@ -300,20 +355,6 @@ open http://localhost:8000/ui
 - Coverage calculation: `(days_with_data / 365) × 100%`
 - Volume threshold: 1000 units/day minimum (configurable)
 
-### Script Cleanup Recommendations
-
-**Scripts you can potentially remove:**
-- **`setup.ps1`** - Redundant with `first_run_setup.ps1` (but useful for minimal setup)
-- Consider consolidating if you prefer a single setup script
-
-**Scripts to keep:**
-- **`first_run_setup.ps1`** - Essential for new users
-- **`run_pipeline.ps1`** - Essential for automation
-- **`run_select_items.ps1`** - Useful for item management
-- **`select_items.py`** - Core functionality
-- **`run_backtest.py`** - Core functionality
-- **`config_utils.py`** - Shared utilities
-
 ## Project Outcomes
 
 This project successfully demonstrates:
@@ -324,8 +365,6 @@ This project successfully demonstrates:
 - ✅ **Production-ready API** serving predictions and metrics via FastAPI
 - ✅ **Intelligent automation** with item-driven configuration and auto-selection
 - ✅ **Professional documentation** with clear setup guides and technical explanations
-
-The result is a complete, portfolio-ready data system that showcases the fundamentals needed for any data engineering role.
 
 ## Web UI Dashboard
 
@@ -348,15 +387,6 @@ The project includes a responsive web dashboard at `/ui` that provides:
 - `GET /leaderboard?last=30d` - Shows best method per item (sMAPE + MAE)
 - `GET /predict?item_id=X&horizon=1` - Price forecasts for selected items
 - `GET /metrics?item_id=X&last=30d` - Model performance metrics
-
-**📸 Screenshot:**
-```powershell
-# Start the API server
-uvicorn api.main:app --reload
-
-# Open browser to http://localhost:8000/ui
-# Take screenshot: Win+Shift+S or use browser dev tools
-```
 
 ## Development
 

@@ -168,9 +168,61 @@ def get_item_statistics(lookback_days: int = 365) -> pd.DataFrame:
         raise
 
 
+def resolve_names_to_ids(
+    names: List[str],
+    mapping_df: pd.DataFrame,
+    operation: str = "include"
+) -> List[int]:
+    """
+    Resolve item names to IDs using case-insensitive exact matching.
+    
+    Args:
+        names: List of item names to resolve
+        mapping_df: DataFrame with id and name columns
+        operation: "include" or "exclude" for logging context
+        
+    Returns:
+        List of resolved item IDs
+    """
+    resolved_ids = []
+    
+    if not names:
+        return resolved_ids
+    
+    logger.info(f"Resolving {len(names)} names for {operation} operation")
+    
+    # Create case-insensitive lookup
+    mapping_lower = mapping_df.copy()
+    mapping_lower['name_lower'] = mapping_lower['name'].str.lower()
+    
+    for name in names:
+        name_lower = name.lower().strip()
+        
+        # Look for exact matches (case-insensitive)
+        exact_matches = mapping_lower[mapping_lower['name_lower'] == name_lower]
+        
+        if len(exact_matches) == 1:
+            item_id = int(exact_matches.iloc[0]['id'])
+            resolved_ids.append(item_id)
+            logger.info(f"Resolved '{name}' → {item_id} ({exact_matches.iloc[0]['name']})")
+            
+        elif len(exact_matches) > 1:
+            # Multiple exact matches - log all and skip
+            matches_info = [f"{row['id']} ({row['name']})" for _, row in exact_matches.iterrows()]
+            logger.warning(f"Multiple matches for '{name}': {', '.join(matches_info)}. Skipping.")
+            
+        else:
+            # No exact match - log warning and skip
+            logger.warning(f"No exact match found for name '{name}'. Skipping.")
+    
+    logger.info(f"Resolved {len(resolved_ids)} out of {len(names)} names for {operation}")
+    return resolved_ids
+
+
 def select_items(
     stats_df: pd.DataFrame,
     config: Dict,
+    mapping_df: pd.DataFrame,
     manual_include: List[int] = None,
     manual_exclude: List[int] = None
 ) -> List[Dict]:
@@ -180,6 +232,7 @@ def select_items(
     Args:
         stats_df: DataFrame with item statistics
         config: Configuration dictionary
+        mapping_df: DataFrame with item ID to name mapping
         manual_include: List of item IDs to always include
         manual_exclude: List of item IDs to always exclude
         
@@ -191,11 +244,29 @@ def select_items(
     min_days = auto_config.get("min_days", 180)
     min_volume = auto_config.get("min_volume", 1000000)
     
+    # Get ID-based overrides
     manual_include = manual_include or config.get("manual_include", [])
     manual_exclude = manual_exclude or config.get("manual_exclude", [])
     
+    # Get name-based overrides and resolve to IDs
+    manual_include_names = config.get("manual_include_names", [])
+    manual_exclude_names = config.get("manual_exclude_names", [])
+    
+    # Resolve names to IDs
+    resolved_include_ids = resolve_names_to_ids(manual_include_names, mapping_df, "include")
+    resolved_exclude_ids = resolve_names_to_ids(manual_exclude_names, mapping_df, "exclude")
+    
+    # Combine ID-based and name-based overrides
+    all_manual_include = list(set(manual_include + resolved_include_ids))
+    all_manual_exclude = list(set(manual_exclude + resolved_exclude_ids))
+    
     logger.info(f"Selection criteria: top_n={top_n}, min_days={min_days}, min_volume={min_volume}")
-    logger.info(f"Manual overrides: include={manual_include}, exclude={manual_exclude}")
+    logger.info(f"ID-based overrides: include={manual_include}, exclude={manual_exclude}")
+    if manual_include_names:
+        logger.info(f"Name-based includes: {manual_include_names} → {resolved_include_ids}")
+    if manual_exclude_names:
+        logger.info(f"Name-based excludes: {manual_exclude_names} → {resolved_exclude_ids}")
+    logger.info(f"Combined overrides: include={all_manual_include}, exclude={all_manual_exclude}")
     
     # Filter by minimum criteria
     filtered_df = stats_df[
@@ -205,19 +276,19 @@ def select_items(
     
     logger.info(f"Items meeting minimum criteria: {len(filtered_df)}")
     
-    # Apply manual exclusions
-    if manual_exclude:
-        filtered_df = filtered_df[~filtered_df['item_id'].isin(manual_exclude)]
+    # Apply manual exclusions (combined)
+    if all_manual_exclude:
+        filtered_df = filtered_df[~filtered_df['item_id'].isin(all_manual_exclude)]
         logger.info(f"After exclusions: {len(filtered_df)} items")
     
     # Get top N by ranking score
     auto_selected = filtered_df.head(top_n)
     
-    # Add manual inclusions (if they meet minimum days requirement)
+    # Add manual inclusions (combined, if they meet minimum days requirement)
     manual_items = pd.DataFrame()
-    if manual_include:
+    if all_manual_include:
         manual_items = stats_df[
-            (stats_df['item_id'].isin(manual_include)) &
+            (stats_df['item_id'].isin(all_manual_include)) &
             (stats_df['days_with_data'] >= min_days)
         ]
         logger.info(f"Manual inclusions meeting criteria: {len(manual_items)}")
@@ -239,7 +310,7 @@ def select_items(
             "avg_price": float(row['avg_price']) if pd.notna(row['avg_price']) else None,
             "ranking_score": float(row['ranking_score']),
             "last_trade_date": str(row['last_trade_date']),
-            "selection_reason": "manual_include" if int(row['item_id']) in manual_include else "auto_selected"
+            "selection_reason": "manual_include" if int(row['item_id']) in all_manual_include else "auto_selected"
         }
         selected_items.append(item)
     
@@ -367,8 +438,17 @@ Examples:
             logger.error("No item statistics found. Please run data ingestion first.")
             sys.exit(1)
         
+        # Get item mapping for name resolution
+        try:
+            with duckdb.connect(DUCKDB_PATH) as conn:
+                mapping_df = conn.execute("SELECT id, name FROM main_bronze.bronze_item_mapping").df()
+                logger.info(f"Loaded {len(mapping_df)} items from mapping table")
+        except Exception as e:
+            logger.error(f"Failed to load item mapping: {e}")
+            sys.exit(1)
+        
         # Select items
-        selected_items = select_items(stats_df, config)
+        selected_items = select_items(stats_df, config, mapping_df)
         
         if len(selected_items) < 5:
             logger.warning(f"Only {len(selected_items)} items selected. Consider relaxing criteria.")
