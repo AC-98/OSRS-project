@@ -26,11 +26,25 @@ from pydantic import BaseModel, Field
 import sys
 sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
 try:
-    from config_utils import load_selected_items
+    from config_utils import (
+        load_selected_items,
+        load_ingestion_config,
+        resolve_names_to_ids_from_mapping,
+        compute_auto_discover_candidates
+    )
 except ImportError:
     # Fallback if config_utils not available
     def load_selected_items(config_path=None, fallback_items=None):
         return fallback_items or [4151, 561, 5616]
+    def load_ingestion_config(config_path=None):
+        return {
+            'ingest_targets': {'include_ids': [], 'include_names': [], 'exclude_ids': [], 'exclude_names': [], 'auto_discover': {'enabled': False, 'top_k': 10, 'min_limit': 1000, 'members_only': None}},
+            'runtime_caps': {'max_items_per_run': 25, 'request_sleep_ms': 450}
+        }
+    def resolve_names_to_ids_from_mapping(names, mapping_df):
+        return []
+    def compute_auto_discover_candidates(mapping_df, min_limit, members_only, top_k):
+        return []
 
 # Environment setup
 try:
@@ -46,53 +60,12 @@ TIMESTEP = os.getenv("TIMESTEP", "1h")
 RAW_DATA_PATH = Path("warehouse/raw")
 RAW_DATA_PATH.mkdir(parents=True, exist_ok=True)
 
-# Default demo items (fallback if config not available)
-# Expanded list with ~30 popular OSRS items for realistic demo
-DEFAULT_DEMO_ITEM_IDS = [
-    # Runes
-    561,    # Nature rune
-    565,    # Blood rune
-    555,    # Water rune
-    557,    # Earth rune
-    
-    # Combat gear
-    4151,   # Abyssal whip
-    11802,  # Armadyl godsword
-    13652,  # Dragon claws
-    
-    # Resources
-    536,    # Dragon bones
-    453,    # Coal
-    440,    # Iron ore
-    1515,   # Yew logs
-    1513,   # Magic logs
-    
-    # Food
-    385,    # Shark
-    7946,   # Monkfish
-    13441,  # Anglerfish
-    
-    # Potions
-    2434,   # Prayer potion(4)
-    3024,   # Super restore(4)
-    
-    # Supplies
-    892,    # Rune arrow
-    11875,  # Broad bolts
-    
-    # Misc
-    5616,   # Bronze arrow(p+) (test item)
-    
-    # Add more high-volume items
-    2,      # Cannonball
-    1623,   # Uncut sapphire
-    1621,   # Uncut ruby
-    1617,   # Uncut diamond
-    8778,   # Oak plank
-    8782,   # Mahogany plank
-    12934,  # Zulrah's scales
-    21880,  # Dragon hunter lance
-    27690,  # Voidwaker (endgame weapon)
+# Emergency seed (used only if all config sources are empty)
+# Minimal set to ensure ingestion never completely fails
+EMERGENCY_SEED_ITEMS = [
+    561,    # Nature rune (high volume)
+    536,    # Dragon bones (stable prices)
+    12934,  # Zulrah's scales (endgame content)
 ]
 
 
@@ -204,7 +177,7 @@ def fetch_item_mapping() -> DataFrame[ItemMappingSchema]:
 
 
 @task
-def fetch_timeseries_for_items(item_ids: List[int]) -> DataFrame[TimeseriesSchema]:
+def fetch_timeseries_for_items(item_ids: List[int], sleep_ms: int = 450) -> DataFrame[TimeseriesSchema]:
     """Fetch timeseries data for multiple items, one request per item."""
     logger = get_run_logger()
     
@@ -280,8 +253,8 @@ def fetch_timeseries_for_items(item_ids: List[int]) -> DataFrame[TimeseriesSchem
         
         # Rate limiting: sleep between requests
         if i < len(item_ids) - 1:  # Don't sleep after last request
-            sleep_time = 0.4  # 400ms between requests
-            logger.info(f"Sleeping {sleep_time}s before next request")
+            sleep_time = sleep_ms / 1000.0  # Convert ms to seconds
+            logger.debug(f"Sleeping {sleep_time}s before next request")
             time.sleep(sleep_time)
     
     if not all_records:
@@ -366,30 +339,158 @@ def save_to_bronze_tables(
 
 @flow(name="ingest-osrs-data")
 def ingest_osrs_data(item_ids: Optional[List[int]] = None) -> None:
-    """Main flow to ingest OSRS Grand Exchange data."""
+    """
+    Main flow to ingest OSRS Grand Exchange data.
+    
+    Uses config-driven approach:
+    1. Fetch item mapping from API
+    2. Load curated items from items_selected.json (if exists)
+    3. Load ingestion targets from items.yaml
+    4. Resolve names to IDs
+    5. Auto-discover liquid items (if enabled)
+    6. Build final target list with exclusions
+    7. Apply per-run cap
+    8. Fetch timeseries data
+    """
     logger = get_run_logger()
     
-    if item_ids is None:
-        # Try to load from config, fallback to default
-        try:
-            config_items = load_selected_items("config/items_selected.json", DEFAULT_DEMO_ITEM_IDS)
-            # For now, combine config items with expanded demo items to get more data
-            item_ids = list(set(config_items + DEFAULT_DEMO_ITEM_IDS))
-            logger.info(f"Loaded {len(config_items)} items from config, expanded to {len(item_ids)} total items")
-        except Exception as e:
-            logger.warning(f"Failed to load config, using defaults: {e}")
-            item_ids = DEFAULT_DEMO_ITEM_IDS
-    
-    logger.info(f"Starting OSRS data ingestion for {len(item_ids)} items: {item_ids}")
-    
-    # Fetch and validate data
+    # Step 1: Fetch mapping (needed for name resolution and auto-discovery)
+    logger.info("Step 1: Fetching item mapping from OSRS Wiki API")
     mapping_df = fetch_item_mapping()
-    timeseries_df = fetch_timeseries_for_items(item_ids)
     
-    # Save to bronze tables
+    # If item_ids explicitly provided, use them directly
+    if item_ids is not None:
+        logger.info(f"Using explicitly provided item IDs: {item_ids}")
+        target_ids = item_ids
+        sleep_ms = 450  # Default sleep
+    else:
+        # Step 2: Load config-driven targets
+        logger.info("Step 2: Loading config-driven ingestion targets")
+        
+        # Load selected items (curated by selection pipeline)
+        selected_ids = []
+        try:
+            selected_ids = load_selected_items("config/items_selected.json", fallback_items=[])
+            logger.info(f"  • Selected items: {len(selected_ids)} items")
+        except Exception as e:
+            logger.warning(f"Could not load selected items: {e}")
+        
+        # Load ingestion config
+        try:
+            config = load_ingestion_config("config/items.yaml")
+            ingest_targets = config['ingest_targets']
+            runtime_caps = config['runtime_caps']
+            sleep_ms = runtime_caps.get('request_sleep_ms', 450)
+            max_items = runtime_caps.get('max_items_per_run', 25)
+        except Exception as e:
+            logger.error(f"Failed to load ingestion config: {e}")
+            ingest_targets = {
+                'include_ids': [],
+                'include_names': [],
+                'exclude_ids': [],
+                'exclude_names': [],
+                'auto_discover': {'enabled': False}
+            }
+            sleep_ms = 450
+            max_items = 25
+        
+        # Step 3: Resolve include/exclude names to IDs
+        logger.info("Step 3: Resolving item names to IDs")
+        include_ids_from_names = resolve_names_to_ids_from_mapping(
+            ingest_targets.get('include_names', []),
+            mapping_df
+        )
+        exclude_ids_from_names = resolve_names_to_ids_from_mapping(
+            ingest_targets.get('exclude_names', []),
+            mapping_df
+        )
+        
+        # Step 4: Auto-discover liquid items (if enabled)
+        discover_ids = []
+        auto_discover = ingest_targets.get('auto_discover', {})
+        if auto_discover.get('enabled', False):
+            logger.info("Step 4: Auto-discovering liquid items")
+            discover_ids = compute_auto_discover_candidates(
+                mapping_df,
+                min_limit=auto_discover.get('min_limit', 1000),
+                members_only=auto_discover.get('members_only'),
+                top_k=auto_discover.get('top_k', 10)
+            )
+            logger.info(f"  • Auto-discovered: {len(discover_ids)} items")
+        else:
+            logger.info("Step 4: Auto-discovery disabled")
+        
+        # Step 5: Build final target list (union of sources, then subtract excludes)
+        logger.info("Step 5: Building final target list")
+        
+        # Union all include sources
+        include_sources = []
+        if selected_ids:
+            include_sources.append(('selected', selected_ids))
+        if ingest_targets.get('include_ids'):
+            include_sources.append(('include_ids', ingest_targets['include_ids']))
+        if include_ids_from_names:
+            include_sources.append(('include_names', include_ids_from_names))
+        if discover_ids:
+            include_sources.append(('auto_discover', discover_ids))
+        
+        # Combine with priority: selected > include_ids > include_names > discover
+        # This ensures stable ordering when applying the cap
+        all_include_ids = []
+        for source_name, source_ids in include_sources:
+            all_include_ids.extend(source_ids)
+            logger.info(f"  • {source_name}: {len(source_ids)} items")
+        
+        # Remove duplicates while preserving order (selected items come first)
+        seen = set()
+        target_ids = []
+        for item_id in all_include_ids:
+            if item_id not in seen:
+                seen.add(item_id)
+                target_ids.append(item_id)
+        
+        # Apply excludes
+        exclude_ids = set(ingest_targets.get('exclude_ids', []) + exclude_ids_from_names)
+        if exclude_ids:
+            logger.info(f"  • Excluding {len(exclude_ids)} items: {list(exclude_ids)[:5]}...")
+            target_ids = [item_id for item_id in target_ids if item_id not in exclude_ids]
+        
+        # Step 6: Apply per-run cap
+        logger.info(f"Step 6: Applying per-run cap (max={max_items})")
+        if len(target_ids) > max_items:
+            logger.info(f"  • Capping from {len(target_ids)} to {max_items} items")
+            target_ids = target_ids[:max_items]
+        
+        # Step 7: Emergency seed if target list is empty
+        if not target_ids:
+            logger.warning(
+                "=" * 80 + "\n"
+                "WARNING: No items to ingest from any config source!\n"
+                "Using emergency seed items to prevent complete failure.\n"
+                "Please configure items in config/items.yaml or run item selection.\n"
+                + "=" * 80
+            )
+            target_ids = EMERGENCY_SEED_ITEMS
+        
+        # Log summary
+        logger.info("\n" + "=" * 80)
+        logger.info("INGESTION TARGET SUMMARY")
+        logger.info("=" * 80)
+        logger.info(f"Total items to fetch: {len(target_ids)}")
+        logger.info(f"First 10 IDs: {target_ids[:10]}")
+        if len(target_ids) > 10:
+            logger.info(f"... and {len(target_ids) - 10} more")
+        logger.info("=" * 80 + "\n")
+    
+    # Step 8: Fetch timeseries data
+    logger.info(f"Step 8: Fetching timeseries data for {len(target_ids)} items")
+    timeseries_df = fetch_timeseries_for_items(target_ids, sleep_ms=sleep_ms)
+    
+    # Step 9: Save to bronze tables
+    logger.info("Step 9: Saving to bronze tables")
     save_to_bronze_tables(mapping_df, timeseries_df)
     
-    logger.info("OSRS data ingestion completed successfully")
+    logger.info("✓ OSRS data ingestion completed successfully")
 
 
 if __name__ == "__main__":

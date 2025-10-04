@@ -76,6 +76,69 @@ The goal is a small but complete system that demonstrates these skills in action
 - **Rate Limited**: Polite requests with caching and backoff
 - **User-Agent**: Always set descriptive header from environment
 
+## Config-Driven Ingestion
+
+The ingestion system is fully configurable via `config/items.yaml`.
+
+### How It Works
+
+Ingestion targets are built from multiple sources in priority order:
+
+1. **Selected items** (from `config/items_selected.json`) - curated by the selection pipeline
+2. **Manual includes** (by ID or name) - items you explicitly want
+3. **Auto-discovery** (optional) - automatically finds liquid items based on GE buy limits
+4. **Emergency seed** - minimal fallback if all sources are empty
+
+Exclusions are applied last, and the final list is capped at `max_items_per_run` to prevent API abuse.
+
+### Configuration Example
+
+```yaml
+# config/items.yaml
+ingest_targets:
+  # Include specific items by ID
+  include_ids: [4151, 561]
+  
+  # Include items by name (case-insensitive)
+  include_names: ["Twisted bow", "Scythe of vitur"]
+  
+  # Exclude items (even if auto-discovered)
+  exclude_ids: [995]  # Coins
+  exclude_names: ["Platinum token"]
+  
+  # Auto-discover high-volume items
+  auto_discover:
+    enabled: true
+    top_k: 10  # Number of items to discover
+    min_limit: 1000  # Minimum GE buy limit
+    members_only: null  # null=both, true=members, false=F2P
+
+runtime_caps:
+  max_items_per_run: 25  # Cap total items per ingestion
+  request_sleep_ms: 450  # Sleep between API requests
+```
+
+### Usage
+
+```powershell
+# Edit config/items.yaml to add/remove items
+notepad config/items.yaml
+
+# Run ingestion (no code changes needed!)
+python flows/ingest_osrs.py
+```
+
+### What Auto-Discovery Does
+
+Auto-discovery uses the **GE buy limit** as a proxy for liquidity. Items with higher limits are typically more liquid and stable:
+
+- Fetches all items from the mapping
+- Filters by `min_limit` (e.g., ≥1000 means you can buy 1000+ per 4 hours)
+- Optionally filters by members/F2P status
+- Sorts by limit descending and takes top K
+
+This lets you automatically track the most liquid items without manual curation.
+
 ## Tech Stack
 
 - **Orchestration**: Prefect (free tier)

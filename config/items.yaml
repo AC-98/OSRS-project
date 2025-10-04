@@ -32,6 +32,8 @@ manual_exclude: []
 # Items matching these names will be included/excluded (case-insensitive exact match)
 manual_include_names:
   - "Voidwaker"
+  - "Dragon claws"
+  - "Armadyl godsword"
 
 manual_exclude_names: []  # e.g., ["Coins", "Fire cape"]
 
@@ -43,3 +45,34 @@ manual_exclude_names: []  # e.g., ["Coins", "Fire cape"]
 # manual_exclude:
 #   - 995   # Coins - exclude (not a tradeable item)
 #   - 6570  # Fire cape - exclude (untradeable)
+
+# ============================================================================
+# Ingestion Configuration
+# ============================================================================
+# Controls which items are fetched during data ingestion.
+# Priority order: selected items → includes → auto-discover → emergency seed
+
+ingest_targets:
+  # Items to always include (by ID)
+  include_ids: []  # e.g., [995, 4151] for specific items
+  
+  # Items to always include (by name, case-insensitive)
+  include_names: ["Dragon claws", "Armadyl godsword"]  # High-value PvP items
+  
+  # Items to always exclude from ingestion (by ID)
+  exclude_ids: []  # e.g., [995] to skip Coins
+  
+  # Items to always exclude from ingestion (by name)
+  exclude_names: []  # e.g., ["Coins", "Platinum token"]
+  
+  # Auto-discovery: fetch high-volume items based on GE buy limits
+  auto_discover:
+    enabled: true  # Set to false to disable auto-discovery
+    top_k: 10  # Number of items to auto-discover
+    min_limit: 1000  # Minimum GE buy limit (proxy for liquidity)
+    members_only: null  # null = both, true = members only, false = F2P only
+
+# Runtime caps to prevent excessive API usage
+runtime_caps:
+  max_items_per_run: 25  # Maximum items to fetch per ingestion run
+  request_sleep_ms: 450  # Sleep between item requests (milliseconds)

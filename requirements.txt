@@ -39,6 +39,9 @@ mypy==1.11.2
 # Environment management
 python-dotenv==1.0.1
 
+# Configuration
+pyyaml==6.0.1
+
 # Additional dependencies for compatibility
 typing-extensions==4.12.2
 anyio==3.7.1
