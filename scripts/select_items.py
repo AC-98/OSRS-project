@@ -91,9 +91,9 @@ def get_item_statistics(lookback_days: int = 365) -> pd.DataFrame:
                 SELECT 
                     st.item_id,
                     CAST(st.ts AS DATE) as trade_date,
-                    SUM(st.volume) as daily_volume,
+                    SUM(CAST(st.volume AS DOUBLE)) as daily_volume,
                     COUNT(*) as daily_observations,
-                    AVG((st.price_avg_high + st.price_avg_low) / 2) as avg_price
+                    AVG((CAST(st.price_avg_high AS DOUBLE) + CAST(st.price_avg_low AS DOUBLE)) / 2.0) as avg_price
                 FROM main_silver.silver_timeseries st
                 WHERE st.ts >= ?
                   AND st.volume > 0
@@ -107,9 +107,9 @@ def get_item_statistics(lookback_days: int = 365) -> pd.DataFrame:
                     im.name,
                     
                     -- Volume metrics (in units, not GP)
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ids.daily_volume) as median_units_per_day,
-                    AVG(ids.daily_volume) as avg_units_per_day,
-                    SUM(ids.daily_volume) as total_units,
+                    CAST(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ids.daily_volume) AS DOUBLE) as median_units_per_day,
+                    CAST(AVG(ids.daily_volume) AS DOUBLE) as avg_units_per_day,
+                    CAST(SUM(ids.daily_volume) AS DOUBLE) as total_units,
                     
                     -- Coverage metrics
                     COUNT(DISTINCT ids.trade_date) as days_with_data,
@@ -148,7 +148,7 @@ def get_item_statistics(lookback_days: int = 365) -> pd.DataFrame:
                 last_trade_date,
                 
                 -- Calculate turnover (units × price)
-                (median_units_per_day * median_price) as median_turnover_gp,
+                CAST(median_units_per_day AS DOUBLE) * CAST(median_price AS DOUBLE) as median_turnover_gp,
                 
                 -- Ranking score: combine volume and coverage
                 (LOG(median_units_per_day + 1) * coverage_pct / 100.0) as ranking_score

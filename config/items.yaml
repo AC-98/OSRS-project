@@ -34,6 +34,7 @@ manual_include_names:
   - "Voidwaker"
   - "Dragon claws"
   - "Armadyl godsword"
+  - "Twisted bow"
 
 manual_exclude_names: []  # e.g., ["Coins", "Fire cape"]
 
@@ -57,7 +58,7 @@ ingest_targets:
   include_ids: []  # e.g., [995, 4151] for specific items
   
   # Items to always include (by name, case-insensitive)
-  include_names: ["Dragon claws", "Armadyl godsword"]  # High-value PvP items
+  include_names: ["Dragon claws", "Armadyl godsword", "Twisted bow"]  # High-value PvP items
   
   # Items to always exclude from ingestion (by ID)
   exclude_ids: []  # e.g., [995] to skip Coins
