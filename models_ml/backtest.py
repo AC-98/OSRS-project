@@ -19,8 +19,12 @@ from sklearn.metrics import mean_absolute_error
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from dotenv import load_dotenv
 
-# Load environment
-load_dotenv()
+# Load environment with error handling
+try:
+    load_dotenv()
+except UnicodeDecodeError:
+    # Skip .env if it has encoding issues - use defaults instead
+    pass
 
 # Configure logging
 logging.basicConfig(

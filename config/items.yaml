@@ -8,25 +8,30 @@ auto_select:
   # Number of top items to select based on ranking criteria
   top_n: 10
   
-  # Minimum days of data required (out of last 365 days)
-  min_days: 1  # Very relaxed for demo - allows items with any data
+  # Minimum days of data required (out of lookback_days period)
+  min_days: 10  # Minimum continuity requirement
   
   # Minimum median daily volume threshold (units traded per day)
   min_volume: 1000  # 1K units minimum (relaxed for demo)
+  
+  # Minimum coverage percentage (days_with_data / lookback_days * 100)
+  # Items must have data on at least this % of days in the lookback period
+  min_coverage_pct: 2.0  # 2% coverage minimum (relaxed for demo with sparse data)
   
   # Lookback period for analysis (days)
   lookback_days: 365
 
 # Manual overrides
 # Items in manual_include will always be selected (if they meet min_days requirement)
-manual_include: [5616]  # Include Coins (test item) for demo
+manual_include: []  # e.g., [4151, 561] for specific item IDs
 
 # Items in manual_exclude will never be selected, even if they rank highly
 manual_exclude: []
 
 # Name-based overrides (additive to ID-based ones above)
 # Items matching these names will be included/excluded (case-insensitive exact match)
-manual_include_names: ["Nature rune", "Blood rune", "Zulrah's scales", "Dragon bones", "Oak plank", "Mahogany plank", "Yew logs", "Magic logs", "Coal", "Iron ore", "Steel bar", "Monkfish", "Shark", "Anglerfish", "Prayer potion(4)", "Super restore(4)", "Saradomin brew(4)", "Stamina potion(4)", "Broad bolts", "Rune arrow", "Abyssal whip", "Dragon dagger", "Black d'hide body", "Black d'hide legs", "Black d'hide shield", "Black d'hide vambraces", "Black d'hide coif", "Black d'hide sq shield", "Black d'hide full helm"]  # e.g., ["Dragon longsword", "Rune platebody"]
+manual_include_names:
+  - "Voidwaker"
 
 manual_exclude_names: []  # e.g., ["Coins", "Fire cape"]
 

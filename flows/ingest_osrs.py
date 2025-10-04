@@ -47,17 +47,52 @@ RAW_DATA_PATH = Path("warehouse/raw")
 RAW_DATA_PATH.mkdir(parents=True, exist_ok=True)
 
 # Default demo items (fallback if config not available)
+# Expanded list with ~30 popular OSRS items for realistic demo
 DEFAULT_DEMO_ITEM_IDS = [
-    4151,  # Abyssal whip
-    561,   # Nature rune
-    5616,  # Bronze arrow(p+) (test item)
-    565,   # Blood rune
-    536,   # Dragon bones
-    385,   # Shark
-    453,   # Coal
-    440,   # Iron ore
-    1515,  # Yew logs
-    1513,  # Magic logs
+    # Runes
+    561,    # Nature rune
+    565,    # Blood rune
+    555,    # Water rune
+    557,    # Earth rune
+    
+    # Combat gear
+    4151,   # Abyssal whip
+    11802,  # Armadyl godsword
+    13652,  # Dragon claws
+    
+    # Resources
+    536,    # Dragon bones
+    453,    # Coal
+    440,    # Iron ore
+    1515,   # Yew logs
+    1513,   # Magic logs
+    
+    # Food
+    385,    # Shark
+    7946,   # Monkfish
+    13441,  # Anglerfish
+    
+    # Potions
+    2434,   # Prayer potion(4)
+    3024,   # Super restore(4)
+    
+    # Supplies
+    892,    # Rune arrow
+    11875,  # Broad bolts
+    
+    # Misc
+    5616,   # Bronze arrow(p+) (test item)
+    
+    # Add more high-volume items
+    2,      # Cannonball
+    1623,   # Uncut sapphire
+    1621,   # Uncut ruby
+    1617,   # Uncut diamond
+    8778,   # Oak plank
+    8782,   # Mahogany plank
+    12934,  # Zulrah's scales
+    21880,  # Dragon hunter lance
+    27690,  # Voidwaker (endgame weapon)
 ]
 
 

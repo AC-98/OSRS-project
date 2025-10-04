@@ -56,7 +56,7 @@ Write-Host "[OK] dbt transformations completed" -ForegroundColor Green
 
 # Step 3: Run item selection
 Write-Host "`nStep 3: Running item selection..." -ForegroundColor Yellow
-& $venvPython scripts/select_items.py
+& $venvPython scripts/select_items.py --mode hybrid --force-include
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Item selection failed" -ForegroundColor Red
     exit 1

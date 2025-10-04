@@ -224,7 +224,9 @@ def select_items(
     config: Dict,
     mapping_df: pd.DataFrame,
     manual_include: List[int] = None,
-    manual_exclude: List[int] = None
+    manual_exclude: List[int] = None,
+    mode: str = "auto",
+    force_include: bool = False
 ) -> List[Dict]:
     """
     Select items based on configuration criteria and manual overrides.
@@ -235,14 +237,26 @@ def select_items(
         mapping_df: DataFrame with item ID to name mapping
         manual_include: List of item IDs to always include
         manual_exclude: List of item IDs to always exclude
+        mode: Selection mode (auto, hybrid, manual)
+        force_include: If True, bypass min_volume for manual includes in hybrid mode
         
     Returns:
         List of selected items with metadata
     """
     auto_config = config.get("auto_select", {})
     top_n = auto_config.get("top_n", 10)
-    min_days = auto_config.get("min_days", 180)
-    min_volume = auto_config.get("min_volume", 1000000)
+    min_days = auto_config.get("min_days", 10)
+    min_volume = auto_config.get("min_volume", 1000)
+    min_coverage_pct = auto_config.get("min_coverage_pct", 0.0)
+    lookback_days = auto_config.get("lookback_days", 365)
+    
+    # Log header with mode and gates
+    logger.info("=" * 80)
+    logger.info(f"SELECTION MODE: {mode.upper()}")
+    logger.info(f"Lookback period: {lookback_days} days")
+    logger.info(f"Quality gates: min_days={min_days}, min_volume={min_volume}, min_coverage_pct={min_coverage_pct}%")
+    logger.info(f"Ranking: top_n={top_n}")
+    logger.info("=" * 80)
     
     # Get ID-based overrides
     manual_include = manual_include or config.get("manual_include", [])
@@ -260,47 +274,98 @@ def select_items(
     all_manual_include = list(set(manual_include + resolved_include_ids))
     all_manual_exclude = list(set(manual_exclude + resolved_exclude_ids))
     
-    logger.info(f"Selection criteria: top_n={top_n}, min_days={min_days}, min_volume={min_volume}")
-    logger.info(f"ID-based overrides: include={manual_include}, exclude={manual_exclude}")
-    if manual_include_names:
-        logger.info(f"Name-based includes: {manual_include_names} → {resolved_include_ids}")
-    if manual_exclude_names:
-        logger.info(f"Name-based excludes: {manual_exclude_names} → {resolved_exclude_ids}")
-    logger.info(f"Combined overrides: include={all_manual_include}, exclude={all_manual_exclude}")
+    if manual_include or manual_include_names:
+        logger.info(f"Manual includes (IDs): {manual_include}")
+        if manual_include_names:
+            logger.info(f"Manual includes (names): {manual_include_names} → {resolved_include_ids}")
+        logger.info(f"Combined manual includes: {all_manual_include}")
     
-    # Filter by minimum criteria
-    filtered_df = stats_df[
-        (stats_df['days_with_data'] >= min_days) &
-        (stats_df['median_units_per_day'] >= min_volume)
+    if all_manual_exclude:
+        logger.info(f"Manual excludes: {all_manual_exclude}")
+    
+    # Apply exclusions first
+    working_df = stats_df.copy()
+    if all_manual_exclude:
+        working_df = working_df[~working_df['item_id'].isin(all_manual_exclude)]
+        logger.info(f"After exclusions: {len(working_df)} candidates")
+    
+    # Apply quality gates (coverage, min_days, min_volume)
+    base_gates_df = working_df[
+        (working_df['days_with_data'] >= min_days) &
+        (working_df['coverage_pct'] >= min_coverage_pct)
     ].copy()
     
-    logger.info(f"Items meeting minimum criteria: {len(filtered_df)}")
+    logger.info(f"Items passing min_days and min_coverage_pct gates: {len(base_gates_df)}")
     
-    # Apply manual exclusions (combined)
-    if all_manual_exclude:
-        filtered_df = filtered_df[~filtered_df['item_id'].isin(all_manual_exclude)]
-        logger.info(f"After exclusions: {len(filtered_df)} items")
+    # Now select based on mode
+    auto_selected_df = pd.DataFrame()
+    manual_selected_df = pd.DataFrame()
     
-    # Get top N by ranking score
-    auto_selected = filtered_df.head(top_n)
-    
-    # Add manual inclusions (combined, if they meet minimum days requirement)
-    manual_items = pd.DataFrame()
-    if all_manual_include:
-        manual_items = stats_df[
-            (stats_df['item_id'].isin(all_manual_include)) &
-            (stats_df['days_with_data'] >= min_days)
-        ]
-        logger.info(f"Manual inclusions meeting criteria: {len(manual_items)}")
+    if mode == "auto":
+        # Pure automatic selection: apply all gates including volume
+        auto_candidates = base_gates_df[
+            base_gates_df['median_units_per_day'] >= min_volume
+        ].copy()
+        
+        logger.info(f"Auto candidates passing all gates: {len(auto_candidates)}")
+        auto_selected_df = auto_candidates.head(top_n)
+        logger.info(f"Auto-selected top {len(auto_selected_df)} items")
+        
+    elif mode == "hybrid":
+        # Hybrid: auto selection + manual includes (with optional force)
+        auto_candidates = base_gates_df[
+            base_gates_df['median_units_per_day'] >= min_volume
+        ].copy()
+        
+        logger.info(f"Auto candidates passing all gates: {len(auto_candidates)}")
+        auto_selected_df = auto_candidates.head(top_n)
+        logger.info(f"Auto-selected top {len(auto_selected_df)} items")
+        
+        # Add manual includes
+        if all_manual_include:
+            if force_include:
+                # Force include: only enforce min_days and coverage, bypass volume
+                manual_selected_df = base_gates_df[
+                    base_gates_df['item_id'].isin(all_manual_include)
+                ].copy()
+                logger.info(f"Manual includes (--force-include, volume gate bypassed): {len(manual_selected_df)}")
+            else:
+                # Normal: enforce all gates for manual includes too
+                manual_selected_df = base_gates_df[
+                    (base_gates_df['item_id'].isin(all_manual_include)) &
+                    (base_gates_df['median_units_per_day'] >= min_volume)
+                ].copy()
+                logger.info(f"Manual includes passing all gates: {len(manual_selected_df)}")
+        
+    elif mode == "manual":
+        # Manual only: use manual includes, enforce min_days and coverage
+        logger.info("Auto selection disabled (manual mode)")
+        if all_manual_include:
+            manual_selected_df = base_gates_df[
+                base_gates_df['item_id'].isin(all_manual_include)
+            ].copy()
+            logger.info(f"Manual includes passing gates: {len(manual_selected_df)}")
+        else:
+            logger.warning("No manual includes specified in manual mode!")
     
     # Combine and deduplicate
-    selected_df = pd.concat([auto_selected, manual_items]).drop_duplicates(subset=['item_id'])
+    selected_df = pd.concat([auto_selected_df, manual_selected_df]).drop_duplicates(subset=['item_id'])
+    
+    # Count auto vs manual
+    auto_count = len(auto_selected_df)
+    manual_count = len(manual_selected_df)
+    total_selected = len(selected_df)
+    
+    logger.info(f"Final selection: {total_selected} items ({auto_count} auto, {manual_count} manual)")
     
     # Convert to list of dictionaries
     selected_items = []
     for _, row in selected_df.iterrows():
+        item_id = int(row['item_id'])
+        is_manual = item_id in all_manual_include
+        
         item = {
-            "id": int(row['item_id']),
+            "id": item_id,
             "name": str(row['name']),
             "median_units_per_day": float(row['median_units_per_day']),
             "median_price": float(row['median_price']) if pd.notna(row['median_price']) else None,
@@ -310,7 +375,7 @@ def select_items(
             "avg_price": float(row['avg_price']) if pd.notna(row['avg_price']) else None,
             "ranking_score": float(row['ranking_score']),
             "last_trade_date": str(row['last_trade_date']),
-            "selection_reason": "manual_include" if int(row['item_id']) in all_manual_include else "auto_selected"
+            "selection_reason": "manual_include" if is_manual else "auto_selected"
         }
         selected_items.append(item)
     
@@ -348,8 +413,8 @@ def save_selected_items(items: List[Dict], output_path: str) -> None:
         raise
 
 
-def print_selection_summary(items: List[Dict]) -> None:
-    """Print a summary of the selected items."""
+def print_selection_summary(items: List[Dict], mode: str = "auto", config: Dict = None) -> None:
+    """Print a summary of the selected items with mode and gate information."""
     print("\n" + "="*80)
     print("ITEM SELECTION SUMMARY")
     print("="*80)
@@ -358,7 +423,29 @@ def print_selection_summary(items: List[Dict]) -> None:
         print("No items selected!")
         return
     
+    # Print mode and configuration
+    print(f"Mode: {mode.upper()}")
+    if config:
+        auto_config = config.get("auto_select", {})
+        lookback_days = auto_config.get("lookback_days", 365)
+        min_days = auto_config.get("min_days", 10)
+        min_volume = auto_config.get("min_volume", 1000)
+        min_coverage_pct = auto_config.get("min_coverage_pct", 0.0)
+        top_n = auto_config.get("top_n", 10)
+        
+        print(f"Lookback period: {lookback_days} days")
+        print(f"Quality gates: min_days={min_days}, min_volume={min_volume:,.0f}, min_coverage_pct={min_coverage_pct}%")
+        print(f"Ranking score: log(units+1) × coverage_pct/100")
+        print(f"Target: top {top_n} items")
+    
+    print()
     print(f"Total selected items: {len(items)}")
+    
+    # Count auto vs manual
+    auto_count = sum(1 for item in items if item['selection_reason'] == 'auto_selected')
+    manual_count = sum(1 for item in items if item['selection_reason'] == 'manual_include')
+    print(f"  • Auto-selected: {auto_count}")
+    print(f"  • Manual includes: {manual_count}")
     print()
     
     # Summary statistics
@@ -421,6 +508,19 @@ Examples:
         help="Show selection results without saving"
     )
     
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "hybrid", "manual"],
+        default="auto",
+        help="Selection mode: auto (ranking only), hybrid (ranking + manual), manual (manual only)"
+    )
+    
+    parser.add_argument(
+        "--force-include",
+        action="store_true",
+        help="In hybrid mode, bypass min_volume gate for manual includes (still enforce min_days/coverage)"
+    )
+    
     args = parser.parse_args()
     
     logger.info("Starting OSRS item selection process")
@@ -448,18 +548,24 @@ Examples:
             sys.exit(1)
         
         # Select items
-        selected_items = select_items(stats_df, config, mapping_df)
+        selected_items = select_items(
+            stats_df, 
+            config, 
+            mapping_df,
+            mode=args.mode,
+            force_include=args.force_include
+        )
         
         if len(selected_items) < 5:
             logger.warning(f"Only {len(selected_items)} items selected. Consider relaxing criteria.")
         
         # Print summary
-        print_selection_summary(selected_items)
+        print_selection_summary(selected_items, mode=args.mode, config=config)
         
         # Save results
         if not args.dry_run:
             save_selected_items(selected_items, args.output)
-            print(f"\n✓ Results saved to: {args.output}")
+            print(f"\n[OK] Results saved to: {args.output}")
         else:
             print(f"\n[DRY RUN] Would save to: {args.output}")
         

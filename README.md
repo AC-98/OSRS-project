@@ -138,20 +138,64 @@ Edit `config/items.yaml` to customize selection:
 
 ```yaml
 auto_select:
-  top_n: 10           # Number of items to auto-select
-  min_days: 180       # Minimum days of data required
-  min_volume: 1000000 # Minimum daily volume (units)
-  lookback_days: 365  # Analysis period
+  top_n: 10              # Number of items to auto-select
+  min_days: 10           # Minimum days of data required
+  min_volume: 1000       # Minimum daily volume (units)
+  min_coverage_pct: 2.0  # Minimum coverage (%) in lookback period
+  lookback_days: 365     # Analysis period
 
-manual_include: [4151, 561]  # Always include these items
-manual_exclude: [995]        # Never include these items
+manual_include: [4151, 561]  # Always include these items (IDs)
+manual_exclude: [995]        # Never include these items (IDs)
+manual_include_names: ["Abyssal whip"]  # Include by name
+manual_exclude_names: ["Coins"]         # Exclude by name
 ```
 
-### Usage
+### Selection Modes
+
+The item selection system supports three modes for different use cases:
+
+**1. Auto Mode (Default)** - Purely data-driven selection:
+```powershell
+python scripts/select_items.py
+# or explicitly:
+python scripts/select_items.py --mode auto
+```
+- Applies all quality gates: `min_days`, `min_volume`, `min_coverage_pct`
+- Ranks by scoring formula: `log(median_units_per_day + 1) × coverage_pct / 100`
+- Selects top N items that pass all gates
+- Ignores manual includes unless they pass gates naturally
+
+**2. Hybrid Mode** - Combine auto-selection with manual picks:
+```powershell
+python scripts/select_items.py --mode hybrid
+```
+- Auto-selects top N items (as in auto mode)
+- Adds manual includes from config (if they pass gates)
+- Use `--force-include` to bypass `min_volume` gate for manual picks:
+  ```powershell
+  python scripts/select_items.py --mode hybrid --force-include
+  ```
+  *(Still enforces `min_days` and `min_coverage_pct` for data quality)*
+
+**3. Manual Mode** - Use only manual overrides:
+```powershell
+python scripts/select_items.py --mode manual
+```
+- Disables automatic ranking
+- Uses only items from `manual_include` and `manual_include_names`
+- Still enforces `min_days` and `min_coverage_pct` gates
+
+### Usage Examples
 
 ```powershell
-# Run item selection (generates config/items_selected.json)
+# Run default auto-selection
 python scripts/select_items.py
+
+# Hybrid mode with force-include for low-volume manual picks
+python scripts/select_items.py --mode hybrid --force-include
+
+# Manual-only selection (for custom item lists)
+python scripts/select_items.py --mode manual
 
 # Use selected items in backtests
 python scripts/run_backtest.py --items @config/items_selected.json
