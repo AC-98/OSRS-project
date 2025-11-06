@@ -57,10 +57,6 @@ mlruns/
 *.swo
 *~
 
-# Cursor AI
-.cursor/
-cursor/rules
-
 # OS
 .DS_Store
 Thumbs.db
