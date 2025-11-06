@@ -101,8 +101,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "[OK] API testing completed" -ForegroundColor Green
 
 # Summary
-Write-Host "`nPipeline Complete!" -ForegroundColor Green
-Write-Host "==================" -ForegroundColor Green
+Write-Host "`n✅ Pipeline Complete!" -ForegroundColor Green
+Write-Host "====================" -ForegroundColor Green
 Write-Host ""
 Write-Host "[OK] Data ingested from OSRS Wiki API" -ForegroundColor White
 Write-Host "[OK] Bronze → Silver → Gold transformations completed" -ForegroundColor White
@@ -110,10 +110,20 @@ Write-Host "[OK] Items selected based on volume and coverage criteria" -Foregrou
 Write-Host "[OK] ML backtests executed and logged to MLflow" -ForegroundColor White
 Write-Host "[OK] API endpoints tested and ready" -ForegroundColor White
 Write-Host ""
-Write-Host "To start the API server:" -ForegroundColor Cyan
-Write-Host "uvicorn api.main:app --reload" -ForegroundColor White
+Write-Host "🚀 Next Steps:" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Then visit:" -ForegroundColor Cyan
-Write-Host "• http://localhost:8000/health - Health check" -ForegroundColor White
-Write-Host "• http://localhost:8000/docs - API documentation" -ForegroundColor White
-Write-Host "• http://localhost:8000/items - Available items" -ForegroundColor White
+Write-Host "1. Start the API server:" -ForegroundColor Yellow
+Write-Host "   uvicorn api.main:app --reload" -ForegroundColor White
+Write-Host ""
+Write-Host "2. View the dashboard:" -ForegroundColor Yellow
+Write-Host "   http://localhost:8000/ui" -ForegroundColor Green
+Write-Host ""
+Write-Host "3. Explore the API:" -ForegroundColor Yellow
+Write-Host "   • http://localhost:8000/docs - Interactive API docs" -ForegroundColor White
+Write-Host "   • http://localhost:8000/items - Available items" -ForegroundColor White
+Write-Host "   • http://localhost:8000/health - Health check" -ForegroundColor White
+Write-Host ""
+Write-Host "4. View MLflow experiments:" -ForegroundColor Yellow
+Write-Host "   mlflow ui --port 5000" -ForegroundColor White
+Write-Host "   Then visit: http://localhost:5000" -ForegroundColor White
+Write-Host ""

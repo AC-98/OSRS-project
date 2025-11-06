@@ -70,8 +70,8 @@ with_features AS (
     latest_price_high,
     latest_price_low,
     
-    -- Use midpoint of high/low as representative price
-    (latest_price_high + latest_price_low) / 2.0 AS latest_price,
+    -- Use midpoint of high/low as representative price (cast to DOUBLE to prevent INT32 overflow)
+    (CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) / 2.0 AS latest_price,
     
     avg_price_high,
     avg_price_low,
@@ -81,22 +81,22 @@ with_features AS (
     observation_count,
     
     -- 7-day moving average of latest price
-    AVG((latest_price_high + latest_price_low) / 2.0) OVER (
+    AVG((CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) / 2.0) OVER (
       PARTITION BY item_id 
       ORDER BY date 
       ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
     ) AS price_7d_ma,
     
     -- Daily return (percentage change from previous day)
-    ((latest_price_high + latest_price_low) / 2.0) / 
-    LAG((latest_price_high + latest_price_low) / 2.0) OVER (
+    ((CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) / 2.0) / 
+    LAG((CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) / 2.0) OVER (
       PARTITION BY item_id ORDER BY date
     ) - 1.0 AS daily_return,
     
     -- Simple volatility proxy: (high - low) / midpoint
     CASE 
-      WHEN (latest_price_high + latest_price_low) > 0
-      THEN (latest_price_high - latest_price_low) / ((latest_price_high + latest_price_low) / 2.0)
+      WHEN (CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) > 0
+      THEN (CAST(latest_price_high AS DOUBLE) - CAST(latest_price_low AS DOUBLE)) / ((CAST(latest_price_high AS DOUBLE) + CAST(latest_price_low AS DOUBLE)) / 2.0)
       ELSE NULL
     END AS volatility_proxy
     

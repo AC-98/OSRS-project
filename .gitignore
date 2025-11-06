@@ -101,6 +101,11 @@ tmp/
 # Config files with sensitive data (keep examples)
 config/items_selected.json
 
+# Internal documentation (personal notes, not for public repo)
+DEMO_CHECKLIST.md
+PROJECT_SUMMARY.md
+QUICK_REFERENCE.md
+
 # Backup files
 *.bak
 *.backup

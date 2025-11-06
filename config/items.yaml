@@ -31,7 +31,6 @@ manual_exclude: []
 # Name-based overrides (additive to ID-based ones above)
 # Items matching these names will be included/excluded (case-insensitive exact match)
 manual_include_names:
-  - "Voidwaker"
   - "Dragon claws"
   - "Armadyl godsword"
   - "Twisted bow"
